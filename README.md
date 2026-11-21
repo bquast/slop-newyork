@@ -4,6 +4,26 @@ A New York City simulation built with [three.js](https://threejs.org/), WebGPURe
 
 [Try it live](https://mrdoob.github.io/slop-newyork/)
 
+## VR
+
+Open the page in the Meta Quest Browser (or a desktop browser with a headset) and click **VR** in the toolbar. You sit
+in the active vehicle, or see through the walker's eyes; the view only turns about the vertical axis, so the horizon
+stays level.
+
+| Control | Walk | Drive / Cycle | Fly |
+|---|---|---|---|
+| Left stick | walk where you look | steer | pitch & yaw |
+| Right trigger | | gas / pedal | up |
+| Left trigger | | brake / reverse | down |
+| Grip | run | | |
+| A | jump | horn | |
+
+Right stick: snap turn · B: next mode · X: time of day · Y: first person / chase view. A panel on the left wrist
+shows the mode, speed and street corner.
+
+In VR the city draws straight to the headset with the WebGL 2 backend (WebXR has no WebGPU binding yet), so the
+screen-space effects (reflections, ambient occlusion, bloom and the colour grade) are off.
+
 ## Make it your own
 
 Fork it, remix it, improve it, break it. Make games, animations, films, experiments, or something completely different. Use it as a starting point and take it wherever you want. Have fun!

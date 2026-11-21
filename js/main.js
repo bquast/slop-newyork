@@ -22,6 +22,7 @@ import { LightingSystem } from './lighting.js';
 import { NYCMapSystem } from './nyc-map.js';
 import { setupSceneCulling, updateSceneCulling } from './scene-culling.js';
 import { CityAudioSystem } from './audio-system.js';
+import { VRSystem, isVRSupported } from './vr.js';
 
 // Application setup, shader warm-up and frame loop.
 
@@ -83,11 +84,16 @@ async function initApp() {
   // 1. Initialize Three.js WebGPURenderer with 32-bit float reversedDepthBuffer.
   // Firefox WebGL2 incurs a heavy renderbufferStorageMultisample + blitFramebuffer stall
   // on multisampled floating-point MRT post-processing render targets, so disable MSAA on Firefox.
+  // Browsers that can show VR (the Meta Quest Browser, or a desktop browser with a headset) get the WebGL 2 backend:
+  // WebXR has no WebGPU binding yet. The headset's projection matrices use the standard depth range, so they also
+  // get a standard depth buffer (the same fallback as a WebGL 2 without EXT_clip_control).
   const isFirefox = typeof navigator !== 'undefined' && /Firefox\//.test(navigator.userAgent);
+  const vrSupported = await isVRSupported();
   const renderer = new THREE.WebGPURenderer({
     antialias: !isFirefox,
     powerPreference: 'high-performance',
-    reversedDepthBuffer: true
+    reversedDepthBuffer: !vrSupported,
+    forceWebGL: vrSupported
   });
   renderer.setPixelRatio(1.0);
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -625,6 +631,33 @@ async function initApp() {
     }
   });
 
+  // VR: the controllers drive the same inputs as a gamepad, and the wrist panel replaces the HUD
+  const TIMES = ['golden', 'midday', 'twilight', 'midnight'];
+  const vr = vrSupported ? new VRSystem({
+    renderer,
+    scene,
+    controllerManager,
+    cameraSystem,
+    shadowCamera: lightingSystem.sunLight.shadow.camera,
+    button: document.getElementById('btn-vr'),
+    callbacks: {
+      onEnter: () => {
+        closePopovers();
+        if (mapSystem.isFullMapOpen) mapSystem.toggleFullMap(false);
+        touchControls.reset();
+        gamepadControls.reset();
+      },
+      onExit: () => gamepadControls.reset(),
+      onSelectCamera: (id) => selectCamera(id, true),
+      onCycleMode: (step) => {
+        const modes = ['person', 'car', 'cyclist', 'helicopter'];
+        selectMode(modes[(modes.indexOf(controllerManager.activeMode) + step + modes.length) % modes.length]);
+      },
+      onCycleTime: () => selectTime(TIMES[(TIMES.indexOf(lightingSystem.activePresetId) + 1) % TIMES.length]),
+      onHorn: () => audioSystem.honk(controllerManager.getActiveEntity())
+    }
+  }) : null;
+
   // Initialize the UI and chase camera around the restored player, or the default taxi on a first visit.
   selectMode(controllerManager.activeMode);
   selectCamera('chase', true);
@@ -729,9 +762,12 @@ async function initApp() {
     elapsed += dt;
 
     // Update 3rd-person controllers, camera, signals, traffic & vehicle collisions, building LODs, and dynamic shadow focus
-    gamepadControls.update(dt);
+    const inVR = vr !== null && vr.presenting;
+    if (inVR) vr.updateInput();
+    else gamepadControls.update(dt);
     controllerManager.update(dt, elapsed, cameraSystem.initialized ? cameraSystem.currentPos : null);
     cameraSystem.update(dt, elapsed);
+    if (inVR) vr.updateView(dt); // the head pose goes to cameraSystem.camera, which the updates below read
     streetDetails.signalClock.value = elapsed;
     trafficSystem.update(
       dt,
@@ -778,7 +814,10 @@ async function initApp() {
       for (const o of culled) o.frustumCulled = true;
       markInit('warmup');
     }
-    renderPipeline.render();
+    // In VR the scene draws straight to the headset (RenderPipeline turns XR off): tone mapping and the output
+    // colour space still apply, the screen-space effects (SSR, GTAO, bloom, colour grade) don't
+    if (inVR) renderer.render(scene, vr.camera);
+    else renderPipeline.render();
     if (!warmedUp) {
       warmedUp = true;
       markInit('firstFrame');

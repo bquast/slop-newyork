@@ -467,6 +467,8 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
   transition: background-color 0.2s ease;
 }
 
+.tool-btn[hidden] { display: none; }
+
 .tool-btn:hover,
 .tool-btn.is-open {
   background: var(--hover);
