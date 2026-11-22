@@ -25,10 +25,11 @@ In VR the city draws straight to the headset with the WebGL 2 backend (WebXR has
 screen-space effects (reflections, ambient occlusion, bloom and the colour grade) are off.
 
 The first VR session of a visit compiles the VR shaders (two eyes, output straight to the headset) while a panel in
-the headset shows the progress. The wrist panel shows the frame rate. URL options: `?vrscale=0.7` sets the
-resolution (share of the headset's own, default 0.7), `?multiview` draws both eyes in one pass, `?vrnoshadows` turns
-the sun's shadows off (faster), `?vrdirect` draws straight into the headset's texture (no copy pass; shows old memory
-on the Quest 3). Options combine: `?multiview&vrnoshadows`.
+the headset shows the progress. The sun's shadows are off in VR. The wrist panel shows the frame rate, and the time
+of the updates (sim) and of the draw calls (draw) in milliseconds; if both are well under the frame time, the GPU is
+the limit. URL options: `?vrscale=0.6` sets the resolution (share of the headset's own, default 0.6), `?multiview`
+draws both eyes in one pass, `?vrshadows` keeps the sun's shadows, `?vrcopy` draws into the renderer's own buffer
+and copies it to the headset. Options combine: `?multiview&vrscale=0.5`.
 
 ## Make it your own
 

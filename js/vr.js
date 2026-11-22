@@ -8,15 +8,15 @@ import { getLocationLabel } from './city-config.js';
 // The headset only turns the view about the vertical axis: the helicopter's pitch and roll and the bike's lean stay out
 // of the view, which keeps the horizon level and the ride comfortable.
 //
-// The city draws into a buffer of the renderer's own (the frame buffer target, the same path as the flat page), and one
-// pass copies it into the headset's texture with the tone mapping. On the Quest, drawing the city straight into the
-// headset's texture (multisampled render-to-texture with the headset's depth) shows old memory where the sky should be.
+// The city draws straight into the headset's texture: each material applies the tone mapping and the sRGB encoding
+// itself, so there is no second full-size buffer and no copy pass. The sun's shadows are off in VR: its two cascades
+// draw the city two more times each frame.
 //
 // The flat shaders draw into the post-processing chain; VR needs shaders of its own (two eyes, no reflection outputs). The first session of a visit compiles them in the background, while a panel in the headset shows the
 // progress, and any error.
 //
-// URL options: ?vrscale=0.7 (resolution, share of the headset's own), ?multiview (draw both eyes at once),
-// ?vrnoshadows (no sun shadows: faster), ?vrdirect (draw straight into the headset's texture, see above).
+// URL options: ?vrscale=0.6 (resolution, share of the headset's own), ?multiview (draw both eyes at once),
+// ?vrshadows (keep the sun's shadows), ?vrcopy (draw into the renderer's own buffer, then copy it to the headset).
 
 const BODY_LAYER = 4; // the player's own body and helmet: out of the first-person view, so you don't look out of your own head
 const SNAP_TURN = Math.PI / 6;
@@ -24,9 +24,9 @@ const DEAD_ZONE = 0.15;
 const WALK = 0.4; // share of the top running speed (8.2 m/s) when walking; hold a grip to run
 const PERSON_EYE = 1.68;
 const PARAMS = new URLSearchParams(globalThis.location?.search || '');
-const SCALE = Math.min(1, Math.max(0.3, Number(PARAMS.get('vrscale')) || 0.7));
-const SHADOWS = !PARAMS.has('vrnoshadows');
-const DIRECT = PARAMS.has('vrdirect');
+const SCALE = Math.min(1, Math.max(0.3, Number(PARAMS.get('vrscale')) || 0.6));
+const SHADOWS = PARAMS.has('vrshadows');
+const DIRECT = !PARAMS.has('vrcopy');
 const MODE_LABELS = { person: 'Walk', car: 'Drive', cyclist: 'Cycle', helicopter: 'Fly' };
 const HELP = {
   person: ['Left stick  walk (look to steer)', 'Grip  run · A  jump'],
@@ -97,7 +97,8 @@ class VRSystem {
     this.fps = 0;
     this.lastFrame = 0;
     this.frameStart = 0;
-    this.jsMs = 0;
+    this.simMs = 0;
+    this.drawMs = 0;
 
     renderer.xr.enabled = true;
     renderer.xr.setReferenceSpaceType('local'); // origin at the head when the session starts: the rig is the eye point
@@ -199,7 +200,7 @@ class VRSystem {
     lines.forEach((line, i) => c.fillText(line, 24, 186 + i * 32));
     c.textAlign = 'right';
     c.fillStyle = this.fps < 45 ? '#ff8a7a' : '#8f96a3';
-    c.fillText(`${Math.round(this.fps)} fps · js ${Math.round(this.jsMs)} ms`, w - 24, 138);
+    c.fillText(`${Math.round(this.fps)} fps · sim ${Math.round(this.simMs)} · draw ${Math.round(this.drawMs)} ms`, w - 24, 138);
     c.textAlign = 'left';
     this.texture.needsUpdate = true;
   }
@@ -294,8 +295,8 @@ class VRSystem {
     document.body.appendChild(note);
   }
 
-  // VR settings: with ?vrnoshadows, no sun shadows; with ?vrdirect, no frame buffer target (each material applies the
-  // tone mapping and the sRGB encoding itself)
+  // VR settings: no sun shadows (unless ?vrshadows); no frame buffer target (unless ?vrcopy), each material applies
+  // the tone mapping and the sRGB encoding itself
   useVROutput() {
     const r = this.renderer;
     this.flatOutput = { toneMapping: r.toneMapping, outputColorSpace: r.outputColorSpace, contextNode: r.contextNode, castShadow: this.sunLight.castShadow };
@@ -361,8 +362,11 @@ class VRSystem {
     this.lastFrame = now;
     if (this.phase === 'ready') {
       try {
+        // sim: the frame's updates before the draw; draw: the JavaScript time of the draw calls. With both well under
+        // the frame time, the GPU is the limit
+        if (this.frameStart > 0) this.simMs += (now - this.frameStart - this.simMs) * 0.05;
         r.render(scene, this.camera);
-        if (this.frameStart > 0) this.jsMs += (performance.now() - this.frameStart - this.jsMs) * 0.05;
+        this.drawMs += (performance.now() - now - this.drawMs) * 0.05;
         return;
       } catch (e) {
         this.report(`Render: ${e?.message || e}`);

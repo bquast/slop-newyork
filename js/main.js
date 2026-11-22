@@ -807,8 +807,11 @@ async function initApp() {
     if (cityBlocks.updateLights) cityBlocks.updateLights(cameraSystem.camera);
     if (streetDetails.update) streetDetails.update(cameraSystem.camera);
     lightingSystem.update(cameraSystem.currentPos);
-    colorGrade.update();
-    mapSystem.update();
+    if (!inVR) {
+      // The colour grade and the minimap don't show in the headset
+      colorGrade.update();
+      mapSystem.update();
+    }
     audioSystem.update(dt, elapsed, cameraSystem.camera, lightingSystem.activePresetId === 'midnight');
     if (warmedUp) updateSceneCulling(cameraSystem.camera.position); // the warm-up frame draws every chunk
     // Traffic collisions can move the player after controller updates; finalize moving hierarchies here.
