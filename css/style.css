@@ -469,6 +469,21 @@ body.hud-minimized .toolbar > :not(#btn-toggle-hud) {
 
 .tool-btn[hidden] { display: none; }
 
+.vr-note {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  max-width: min(720px, calc(100vw - 32px));
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(60, 14, 10, 0.92);
+  color: #ffd9d2;
+  font: 500 13px/1.4 ui-monospace, Menlo, monospace;
+  cursor: pointer;
+}
+
 .tool-btn:hover,
 .tool-btn.is-open {
   background: var(--hover);

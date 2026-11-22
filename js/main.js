@@ -93,7 +93,8 @@ async function initApp() {
     antialias: !isFirefox,
     powerPreference: 'high-performance',
     reversedDepthBuffer: !vrSupported,
-    forceWebGL: vrSupported
+    forceWebGL: vrSupported,
+    multiview: vrSupported && new URLSearchParams(location.search).has('multiview') // see vr.js
   });
   renderer.setPixelRatio(1.0);
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -654,7 +655,13 @@ async function initApp() {
         selectMode(modes[(modes.indexOf(controllerManager.activeMode) + step + modes.length) % modes.length]);
       },
       onCycleTime: () => selectTime(TIMES[(TIMES.indexOf(lightingSystem.activePresetId) + 1) % TIMES.length]),
-      onHorn: () => audioSystem.honk(controllerManager.getActiveEntity())
+      onHorn: () => audioSystem.honk(controllerManager.getActiveEntity()),
+      // The flat shaders target the post-processing chain; VR needs its own (two eyes, output straight to the headset)
+      onPrepare: (camera, onBatch, shouldStop) => {
+        renderer.setMRT(null);
+        renderer.setRenderTarget(null);
+        return compileScene(camera, onBatch, shouldStop);
+      }
     }
   }) : null;
 
@@ -670,18 +677,13 @@ async function initApp() {
   // while individual jobs yield to the browser.
   const COMPILE_POOL = 16;
   const nextTask = () => (globalThis.scheduler?.yield ? globalThis.scheduler.yield() : new Promise((resolve) => setTimeout(resolve, 0)));
-  async function precompileShaders() {
-    await showLoadingStage('Preparing reflections and bloom...', 'postFX');
-    // An empty frame first: it sets up the post-processing chain, which configures the scene pass's render target
-    // (MSAA samples, depth format), so the pipelines compiled below are the very ones the scene pass asks for
-    scene.visible = false;
-    renderPipeline.render();
-    scene.visible = true;
-    markInit('postFX');
 
-    // Every visible object with frustum culling off (like the warm-up frame, see the loop). Plain meshes that share
-    // a material share its shader, so one job compiles them in turn (the first build serves the rest); every
-    // instanced mesh gets a build of its own unless its chunks share a pipeline
+  // Compiles every visible object for the given camera, against the current render target and MRT, with frustum
+  // culling off (like the warm-up frame, see the loop). Plain meshes that share a material share its shader, so one
+  // job compiles them in turn (the first build serves the rest); every instanced mesh gets a build of its own unless
+  // its chunks share a pipeline. onBatch(done, total) reports progress; the first call (done = 0) is awaited.
+  // shouldStop() ends it early (VR: the session ended).
+  async function compileScene(camera, onBatch, shouldStop = () => false) {
     const culled = [];
     const jobs = [];
     const jobByMaterial = new Map();
@@ -711,15 +713,13 @@ async function initApp() {
       job.push(o);
     });
 
-    await showLoadingStage(`Compiling scene shaders... 0 / ${jobs.length} batches`, 'compile', false);
-    renderer.setRenderTarget(scenePass.renderTarget);
-    renderer.setMRT(sceneMRT);
+    await onBatch(0, jobs.length);
     const compile = async (object) => {
       // Each compile starts in a task of its own: compileAsync() keeps one precompilation state on the renderer,
       // which must not be mid-step for two of them in the same microtask checkpoint
       await nextTask();
       try {
-        await renderer.compileAsync(object, cameraSystem.camera, scene);
+        await renderer.compileAsync(object, camera, scene);
       } catch (e) {
         console.warn('[compile]', e); // the warm-up frame compiles it instead
       }
@@ -727,18 +727,38 @@ async function initApp() {
     let next = 0;
     let done = 0;
     const worker = async () => {
-      while (next < jobs.length) {
+      while (next < jobs.length && !shouldStop()) {
         const job = jobs[next++];
         for (const object of job) await compile(object);
         done++;
-        if (loadingStatus) loadingStatus.textContent = `Compiling scene shaders... ${done} / ${jobs.length} batches`;
-        setStageProgress(done / jobs.length);
+        onBatch(done, jobs.length);
       }
     };
     await Promise.all(Array.from({ length: COMPILE_POOL }, worker));
+    for (const o of culled) o.frustumCulled = true;
+  }
+
+  async function precompileShaders() {
+    await showLoadingStage('Preparing reflections and bloom...', 'postFX');
+    // An empty frame first: it sets up the post-processing chain, which configures the scene pass's render target
+    // (MSAA samples, depth format), so the pipelines compiled below are the very ones the scene pass asks for
+    scene.visible = false;
+    renderPipeline.render();
+    scene.visible = true;
+    markInit('postFX');
+
+    await compileScene(cameraSystem.camera, async (done, total) => {
+      if (done === 0) {
+        await showLoadingStage(`Compiling scene shaders... 0 / ${total} batches`, 'compile', false);
+        renderer.setRenderTarget(scenePass.renderTarget);
+        renderer.setMRT(sceneMRT);
+        return;
+      }
+      if (loadingStatus) loadingStatus.textContent = `Compiling scene shaders... ${done} / ${total} batches`;
+      setStageProgress(done / total);
+    });
     renderer.setMRT(null);
     renderer.setRenderTarget(null);
-    for (const o of culled) o.frustumCulled = true;
   }
 
   await precompileShaders();
@@ -814,9 +834,8 @@ async function initApp() {
       for (const o of culled) o.frustumCulled = true;
       markInit('warmup');
     }
-    // In VR the scene draws straight to the headset (RenderPipeline turns XR off): tone mapping and the output
-    // colour space still apply, the screen-space effects (SSR, GTAO, bloom, colour grade) don't
-    if (inVR) renderer.render(scene, vr.camera);
+    // In VR the scene draws straight to the headset (RenderPipeline turns XR off), see VRSystem.render()
+    if (inVR) vr.render(scene);
     else renderPipeline.render();
     if (!warmedUp) {
       warmedUp = true;
