@@ -7,7 +7,7 @@ const { loadModule } = require('./helpers/module.cjs');
 const source = readFileSync(join(__dirname, '../js/vr.js'), 'utf8');
 const { VRSystem } = loadModule(source, {
   imports: { 'three/webgpu': {}, 'three/tsl': {}, './city-config.js': { getLocationLabel: () => '' } },
-  globals: { Math, Number, Object, Boolean, URLSearchParams },
+  globals: { Math, Number, Object, Boolean, URLSearchParams, performance },
   filename: 'vr.js'
 });
 

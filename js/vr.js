@@ -8,11 +8,15 @@ import { getLocationLabel } from './city-config.js';
 // The headset only turns the view about the vertical axis: the helicopter's pitch and roll and the bike's lean stay out
 // of the view, which keeps the horizon level and the ride comfortable.
 //
-// The flat shaders draw into the post-processing chain; VR needs shaders of its own (two eyes, tone mapping and sRGB
-// output in each material, straight into the headset's buffer). The first session of a visit compiles them in the
-// background, while a panel in the headset shows the progress, and any error.
+// The city draws into a buffer of the renderer's own (the frame buffer target, the same path as the flat page), and one
+// pass copies it into the headset's texture with the tone mapping. On the Quest, drawing the city straight into the
+// headset's texture (multisampled render-to-texture with the headset's depth) shows old memory where the sky should be.
 //
-// URL options: ?vrscale=0.7 (resolution, share of the headset's own), ?multiview (draw both eyes at once).
+// The flat shaders draw into the post-processing chain; VR needs shaders of its own (two eyes, no reflection outputs). The first session of a visit compiles them in the background, while a panel in the headset shows the
+// progress, and any error.
+//
+// URL options: ?vrscale=0.7 (resolution, share of the headset's own), ?multiview (draw both eyes at once),
+// ?vrnoshadows (no sun shadows: faster), ?vrdirect (draw straight into the headset's texture, see above).
 
 const BODY_LAYER = 4; // the player's own body and helmet: out of the first-person view, so you don't look out of your own head
 const SNAP_TURN = Math.PI / 6;
@@ -21,6 +25,8 @@ const WALK = 0.4; // share of the top running speed (8.2 m/s) when walking; hold
 const PERSON_EYE = 1.68;
 const PARAMS = new URLSearchParams(globalThis.location?.search || '');
 const SCALE = Math.min(1, Math.max(0.3, Number(PARAMS.get('vrscale')) || 0.7));
+const SHADOWS = !PARAMS.has('vrnoshadows');
+const DIRECT = PARAMS.has('vrdirect');
 const MODE_LABELS = { person: 'Walk', car: 'Drive', cyclist: 'Cycle', helicopter: 'Fly' };
 const HELP = {
   person: ['Left stick  walk (look to steer)', 'Grip  run · A  jump'],
@@ -63,8 +69,9 @@ async function isVRSupported() {
 }
 
 class VRSystem {
-  constructor({ renderer, scene, controllerManager, cameraSystem, shadowCamera, button, callbacks = {} }) {
+  constructor({ renderer, scene, controllerManager, cameraSystem, sunLight, button, callbacks = {} }) {
     this.renderer = renderer;
+    this.sunLight = sunLight;
     this.controller = controllerManager;
     this.cameraSystem = cameraSystem;
     this.callbacks = callbacks;
@@ -89,6 +96,8 @@ class VRSystem {
     this.vrContext = null;
     this.fps = 0;
     this.lastFrame = 0;
+    this.frameStart = 0;
+    this.jsMs = 0;
 
     renderer.xr.enabled = true;
     renderer.xr.setReferenceSpaceType('local'); // origin at the head when the session starts: the rig is the eye point
@@ -108,7 +117,7 @@ class VRSystem {
     const body = [...ents.person.crowd.meshes, ...ents.cyclist.riderCrowd.meshes, ents.cyclist.helmet];
     for (const root of body) root.traverse((o) => o.layers.set(BODY_LAYER));
     cameraSystem.camera.layers.enable(BODY_LAYER);
-    shadowCamera.layers.enable(BODY_LAYER);
+    sunLight.shadow.camera.layers.enable(BODY_LAYER);
 
     this.buildControllers();
     this.buildPanel();
@@ -190,7 +199,7 @@ class VRSystem {
     lines.forEach((line, i) => c.fillText(line, 24, 186 + i * 32));
     c.textAlign = 'right';
     c.fillStyle = this.fps < 45 ? '#ff8a7a' : '#8f96a3';
-    c.fillText(`${Math.round(this.fps)} fps`, w - 24, 138);
+    c.fillText(`${Math.round(this.fps)} fps · js ${Math.round(this.jsMs)} ms`, w - 24, 138);
     c.textAlign = 'left';
     this.texture.needsUpdate = true;
   }
@@ -285,11 +294,13 @@ class VRSystem {
     document.body.appendChild(note);
   }
 
-  // VR output: no frame buffer target (a second full-size buffer and a copy per frame); each material applies the
-  // tone mapping and the sRGB encoding itself
+  // VR settings: with ?vrnoshadows, no sun shadows; with ?vrdirect, no frame buffer target (each material applies the
+  // tone mapping and the sRGB encoding itself)
   useVROutput() {
     const r = this.renderer;
-    this.flatOutput = { toneMapping: r.toneMapping, outputColorSpace: r.outputColorSpace, contextNode: r.contextNode };
+    this.flatOutput = { toneMapping: r.toneMapping, outputColorSpace: r.outputColorSpace, contextNode: r.contextNode, castShadow: this.sunLight.castShadow };
+    if (!SHADOWS) this.sunLight.castShadow = false;
+    if (!DIRECT) return;
     if (!this.vrContext) {
       const { toneMapping, outputColorSpace, contextNode } = this.flatOutput;
       this.vrContext = context({
@@ -312,6 +323,7 @@ class VRSystem {
     r.toneMapping = this.flatOutput.toneMapping;
     r.outputColorSpace = this.flatOutput.outputColorSpace;
     r.contextNode = this.flatOutput.contextNode;
+    this.sunLight.castShadow = this.flatOutput.castShadow;
     this.flatOutput = null;
   }
 
@@ -350,6 +362,7 @@ class VRSystem {
     if (this.phase === 'ready') {
       try {
         r.render(scene, this.camera);
+        if (this.frameStart > 0) this.jsMs += (performance.now() - this.frameStart - this.jsMs) * 0.05;
         return;
       } catch (e) {
         this.report(`Render: ${e?.message || e}`);
@@ -436,6 +449,7 @@ class VRSystem {
 
   // Before the controllers update: the two XR controllers drive the same inputs as a gamepad
   updateInput() {
+    this.frameStart = performance.now(); // the start of the frame's work, for the js time on the wrist panel
     const cm = this.controller;
     const L = readPad(this.sources.left), R = readPad(this.sources.right);
     const edge = (hand, pad, i) => pad.pressed[i] && !this.previous[hand][i];

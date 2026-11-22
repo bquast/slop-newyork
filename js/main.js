@@ -639,7 +639,7 @@ async function initApp() {
     scene,
     controllerManager,
     cameraSystem,
-    shadowCamera: lightingSystem.sunLight.shadow.camera,
+    sunLight: lightingSystem.sunLight,
     button: document.getElementById('btn-vr'),
     callbacks: {
       onEnter: () => {

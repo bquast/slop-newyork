@@ -254,7 +254,10 @@ class LightingSystem {
       const down = float(1.0).sub(max(normalize(positionWorld.sub(cameraPosition)).y, 0.0));
       const glow = mix(this.uGlowZenith, this.uGlowHorizon, down.mul(down).mul(down).mul(down));
       const finalSky = dayCol.mul(float(1.0).sub(this.uNightFactor)).add(glow);
-      return vec4(finalSky, float(1.0));
+      // A NaN or an infinity (the Quest's GPU gives them for some sky directions) fails the test and draws black, instead
+      // of garbage colours in VR or a black screen through the bloom of the flat page
+      const finite = float(1e9).greaterThan(finalSky.x.add(finalSky.y).add(finalSky.z));
+      return vec4(select(finite, max(finalSky, 0.0), vec3(0.0)), float(1.0));
     })();
 
     this.scene.add(this.sky);

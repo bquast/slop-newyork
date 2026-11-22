@@ -26,7 +26,9 @@ screen-space effects (reflections, ambient occlusion, bloom and the colour grade
 
 The first VR session of a visit compiles the VR shaders (two eyes, output straight to the headset) while a panel in
 the headset shows the progress. The wrist panel shows the frame rate. URL options: `?vrscale=0.7` sets the
-resolution (share of the headset's own, default 0.7), `?multiview` draws both eyes in one pass.
+resolution (share of the headset's own, default 0.7), `?multiview` draws both eyes in one pass, `?vrnoshadows` turns
+the sun's shadows off (faster), `?vrdirect` draws straight into the headset's texture (no copy pass; shows old memory
+on the Quest 3). Options combine: `?multiview&vrnoshadows`.
 
 ## Make it your own
 
